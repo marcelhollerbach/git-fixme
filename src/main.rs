@@ -76,7 +76,7 @@ fn print_insertion(contents : &String, repo : &git2::Repository, path: &std::pat
 {
   let mut opts = BlameOptions::new();
   let blame = repo.blame_file(&path_to_repository_local(path, repo).unwrap(), Some(&mut opts)).unwrap();
-  let hunk = blame.get_line(line_number + 1).unwrap();
+  let hunk = blame.get_line(line_number).unwrap();
 
   println!("{}:{} @ {}", path.display(), contents, hunk.final_commit_id());
 }
