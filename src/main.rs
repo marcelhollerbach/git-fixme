@@ -18,17 +18,25 @@ Usage:
   git-fixme (-h | --help)
   git-fixme --insertion
   git-fixme --file
+  git-fixme --stats
 
 Options:
   -h --help      Show this screen.
   --insertion    Insertion of when the FIXME was inserted.
   --file         Only report the file
+  --stats        Print how many fixmes accros how many files are there
 ";
 
 #[derive(Debug, Deserialize)]
 struct Args {
     flag_insertion : bool,
-    flag_file : bool
+    flag_file : bool,
+    flag_stats : bool
+}
+
+struct Stats {
+  fixmes : usize,
+  files : usize
 }
 
 enum DirAction {
@@ -109,6 +117,8 @@ fn handle_file(args : &Args, repo : &git2::Repository, path: &std::path::PathBuf
         break;
       } else if args.flag_insertion {
         print_insertion(&contents, repo, path, line_number);
+      } else if args.flag_stats {
+        //nop here
       } else {
         print_default(&contents, path, line_number);
       }
@@ -160,7 +170,7 @@ fn generate_action(repo : &git2::Repository,entry : DirEntry) -> DirAction {
 
 }
 
-fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Path) -> Result<(), ()> {
+fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Path, stats : &mut Stats) -> Result<(), ()> {
     let directory = fs::read_dir(p).unwrap();
     let mut error = false;
 
@@ -172,7 +182,7 @@ fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Pat
       let file = entry.unwrap();
       match generate_action(repo, file) {
         DirAction::Enter(path) => {
-          let iteration_result = iterate_directory(args, repo, &path);
+          let iteration_result = iterate_directory(args, repo, &path, stats);
           if iteration_result.is_err() {
             error = true;
           }
@@ -182,6 +192,12 @@ fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Pat
           if res.is_err() {
             println!("{}:{}", path.display(), res.unwrap_err());
             error = true;
+          } else {
+            let fixmes = res.unwrap();
+            stats.fixmes = stats.fixmes + fixmes;
+            if fixmes > 0 {
+              stats.files = stats.files + 1;
+            }
           }
         },
         DirAction::Nothing(b) => {
@@ -203,11 +219,18 @@ fn run(args : &Args) -> Result<(), (git2::Error)> {
   let cwd_buf = env::current_dir().unwrap();
   let cwd = cwd_buf.as_path();
   let repo = try!(Repository::discover(cwd));
+  let mut stats = Stats { fixmes : 0, files : 0};
 
-  match iterate_directory(args, &repo, &cwd) {
+  let result = match iterate_directory(args, &repo, &cwd, &mut stats) {
     Ok(()) => Ok(()),
     Err(()) => Err(git2::Error::from_str("Some errors happened")),
+  };
+
+  if args.flag_stats {
+    println!("{} {}", stats.files, stats.fixmes);
   }
+
+  result
 }
 
 fn main() {
