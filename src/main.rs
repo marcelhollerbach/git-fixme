@@ -64,44 +64,59 @@ fn line_patches(content : &String) -> bool {
   return false;
 }
 
-fn handle_file(args : &Args, repo : &git2::Repository, path: &std::path::PathBuf) -> Result<(), std::io::Error> {
+fn print_insertion(contents : &String, repo : &git2::Repository, path: &std::path::PathBuf, line_number : usize)
+{
+  let mut opts = BlameOptions::new();
+  let blame = repo.blame_file(&path_to_repository_local(path, repo).unwrap(), Some(&mut opts)).unwrap();
+  let hunk = blame.get_line(line_number + 1).unwrap();
+
+  println!("{}:{} @ {}", path.display(), contents, hunk.final_commit_id());
+}
+
+fn print_only_files(_contents : &String, path: &std::path::PathBuf, _line_number : usize)
+{
+  println!("{}", path.display());
+}
+
+fn print_default(contents : &String, path: &std::path::PathBuf, line_number : usize)
+{
+  println!("{}:{} {}", path.display(), line_number, contents);
+}
+
+fn handle_file(args : &Args, repo : &git2::Repository, path: &std::path::PathBuf) -> Result<usize, std::io::Error> {
   let file = try!(File::open(path));
   let mut buf_reader = BufReader::new(file);
   let mut contents = String::from("a");
-  let mut i = 0;
+  let mut line_number = 1;
+  let mut hit_counter = 0;
 
   while contents.len() > 0 {
     contents.clear();
     let reader = buf_reader.read_line(&mut contents);
     if reader.is_err() {
-      return Err(reader.unwrap_err());
+      let error = reader.unwrap_err();
+      if error.kind() == std::io::ErrorKind::InvalidData {
+        return Ok(0);
+      }
+      return Err(error);
     }
     if line_patches(&contents) {
-      print!("{}", path.display());
-
-      //only report a file once
-      if args.flag_file {
-        println!("");
-        break;
-      }
-
       //get rid of \n and print this
       contents.pop();
-      print!(":{}", contents);
-
-      //either add the revision where the line was changed, or add a \n
-      if args.flag_insertion {
-        let mut opts = BlameOptions::new();
-        let blame = repo.blame_file(&path_to_repository_local(path, repo).unwrap(), Some(&mut opts)).unwrap();
-        let hunk = blame.get_line(i + 1).unwrap();
-        println!(" @ {}", hunk.final_commit_id());
+      hit_counter = hit_counter + 1;
+      if args.flag_file {
+        print_only_files(&contents, path, line_number);
+        break;
+      } else if args.flag_insertion {
+        print_insertion(&contents, repo, path, line_number);
       } else {
-        println!("");
+        print_default(&contents, path, line_number);
       }
-      i = i + 1;
     }
+    line_number = line_number + 1;
   }
-  Ok(())
+
+  Ok(hit_counter)
 }
 
 fn generate_action(repo : &git2::Repository,entry : DirEntry) -> DirAction {
@@ -165,6 +180,7 @@ fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Pat
         DirAction::Check(path) => {
           let res = handle_file(args, repo, &path);
           if res.is_err() {
+            println!("{}:{}", path.display(), res.unwrap_err());
             error = true;
           }
         },
