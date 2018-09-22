@@ -47,8 +47,8 @@ enum DirAction {
 
 struct Global <'a> {
   args :  &'a Args,
-  path : &'a std::path::Path,
-  repo : &'a git2::Repository
+  repo : &'a git2::Repository,
+  matching_keys : &'a Vec<&'a str>
 }
 
 fn path_to_repository_local(path : &std::path::Path, repo : &git2::Repository) -> Option<std::path::PathBuf> {
@@ -60,16 +60,9 @@ fn path_to_repository_local(path : &std::path::Path, repo : &git2::Repository) -
   return Some(path.strip_prefix(repo_path).unwrap().to_path_buf());
 }
 
-fn line_patches(content : &String) -> bool {
+fn line_is_fixme(global : &Global, content : &String) -> bool {
 
-  let setting : String = match env::var("GIT_FIXME_KEYS") {
-    Ok(v) => v,
-    _ => String::from("FIXME"),
-  };
-
-  let keys : Vec<&str> = setting.split(':').collect();
-
-  for key in keys {
+  for key in global.matching_keys {
     if content.contains(key) {
       return true;
     }
@@ -114,7 +107,7 @@ fn handle_file(global : &Global, path: &std::path::PathBuf) -> Result<usize, std
       }
       return Err(error);
     }
-    if line_patches(&contents) {
+    if line_is_fixme(global, &contents) {
       //get rid of \n and print this
       contents.pop();
       hit_counter = hit_counter + 1;
@@ -225,7 +218,12 @@ fn run(args : &Args) -> Result<(), (git2::Error)> {
   let cwd_buf = env::current_dir().unwrap();
   let cwd = cwd_buf.as_path();
   let repo = try!(Repository::discover(cwd));
-  let global = Global { args : args, path : &cwd, repo : &repo};
+  let setting : String = match env::var("GIT_FIXME_KEYS") {
+    Ok(v) => v,
+    _ => String::from("FIXME"),
+  };
+  let keys : Vec<&str> = setting.split(':').collect();
+  let global = Global { args : args, repo : &repo, matching_keys : &keys};
   let mut stats = Stats {fixmes : 0, files : 0 };
 
   let result = match iterate_directory(&global, cwd, &mut stats) {
