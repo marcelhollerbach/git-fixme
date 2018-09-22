@@ -45,6 +45,12 @@ enum DirAction {
   Nothing(bool),
 }
 
+struct Global <'a> {
+  args :  &'a Args,
+  path : &'a std::path::Path,
+  repo : &'a git2::Repository
+}
+
 fn path_to_repository_local(path : &std::path::Path, repo : &git2::Repository) -> Option<std::path::PathBuf> {
   //this gets the repository root directory
   let repo_path = repo.path().parent().unwrap();
@@ -91,7 +97,7 @@ fn print_default(contents : &String, path: &std::path::PathBuf, line_number : us
   println!("{}:{} {}", path.display(), line_number, contents);
 }
 
-fn handle_file(args : &Args, repo : &git2::Repository, path: &std::path::PathBuf) -> Result<usize, std::io::Error> {
+fn handle_file(global : &Global, path: &std::path::PathBuf) -> Result<usize, std::io::Error> {
   let file = try!(File::open(path));
   let mut buf_reader = BufReader::new(file);
   let mut contents = String::from("a");
@@ -112,12 +118,12 @@ fn handle_file(args : &Args, repo : &git2::Repository, path: &std::path::PathBuf
       //get rid of \n and print this
       contents.pop();
       hit_counter = hit_counter + 1;
-      if args.flag_file {
+      if global.args.flag_file {
         print_only_files(&contents, path, line_number);
         break;
-      } else if args.flag_insertion {
-        print_insertion(&contents, repo, path, line_number);
-      } else if args.flag_stats {
+      } else if global.args.flag_insertion {
+        print_insertion(&contents, global.repo, path, line_number);
+      } else if global.args.flag_stats {
         //nop here
       } else {
         print_default(&contents, path, line_number);
@@ -129,10 +135,10 @@ fn handle_file(args : &Args, repo : &git2::Repository, path: &std::path::PathBuf
   Ok(hit_counter)
 }
 
-fn generate_action(repo : &git2::Repository,entry : DirEntry) -> DirAction {
+fn generate_action(global : &Global,entry : DirEntry) -> DirAction {
    let path = entry.path();
    let is_dir = entry.metadata().map(|data| data.is_dir());
-   let ignored = repo.is_path_ignored(path.as_path());
+   let ignored = global.repo.is_path_ignored(path.as_path());
 
    if is_dir.is_err() {
      println!("{}", is_dir.err().unwrap());
@@ -153,13 +159,13 @@ fn generate_action(repo : &git2::Repository,entry : DirEntry) -> DirAction {
    }
 
    //check if the file is in the index
-   let index = repo.index();
+   let index = global.repo.index();
 
    if !index.is_ok() {
      return DirAction::Nothing(false);
    }
 
-   let index_path = index.unwrap().get_path(&path_to_repository_local(&path, repo).unwrap(), 0);
+   let index_path = index.unwrap().get_path(&path_to_repository_local(&path, global.repo).unwrap(), 0);
 
    if index_path.is_some() {
      return DirAction::Check(path);
@@ -170,7 +176,7 @@ fn generate_action(repo : &git2::Repository,entry : DirEntry) -> DirAction {
 
 }
 
-fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Path, stats : &mut Stats) -> Result<(), ()> {
+fn iterate_directory(global : &Global, p : &std::path::Path, stats : &mut Stats) -> Result<(), ()> {
     let directory = fs::read_dir(p).unwrap();
     let mut error = false;
 
@@ -180,15 +186,15 @@ fn iterate_directory(args : &Args, repo : &git2::Repository, p : &std::path::Pat
         continue;
       }
       let file = entry.unwrap();
-      match generate_action(repo, file) {
+      match generate_action(global, file) {
         DirAction::Enter(path) => {
-          let iteration_result = iterate_directory(args, repo, &path, stats);
+          let iteration_result = iterate_directory(global, &path, stats);
           if iteration_result.is_err() {
             error = true;
           }
         },
         DirAction::Check(path) => {
-          let res = handle_file(args, repo, &path);
+          let res = handle_file(global, &path);
           if res.is_err() {
             println!("{}:{}", path.display(), res.unwrap_err());
             error = true;
@@ -219,9 +225,10 @@ fn run(args : &Args) -> Result<(), (git2::Error)> {
   let cwd_buf = env::current_dir().unwrap();
   let cwd = cwd_buf.as_path();
   let repo = try!(Repository::discover(cwd));
-  let mut stats = Stats { fixmes : 0, files : 0};
+  let global = Global { args : args, path : &cwd, repo : &repo};
+  let mut stats = Stats {fixmes : 0, files : 0 };
 
-  let result = match iterate_directory(args, &repo, &cwd, &mut stats) {
+  let result = match iterate_directory(&global, cwd, &mut stats) {
     Ok(()) => Ok(()),
     Err(()) => Err(git2::Error::from_str("Some errors happened")),
   };
